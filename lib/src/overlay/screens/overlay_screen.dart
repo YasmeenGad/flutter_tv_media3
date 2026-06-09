@@ -191,7 +191,6 @@ class _OverlayScreenState extends State<OverlayScreen> {
                 );
               }
               if (state.playerPanel == PlayerPanel.touchOverlay) {
-                bloc.add(const SetTouchMode(isTouch: true));
                 return TouchControlsOverlay(
                   controller: widget.controller,
                   takeScreenshot: _takeScreenshot,
@@ -551,6 +550,14 @@ class _OverlayScreenState extends State<OverlayScreen> {
 
   Future<void> _playPause() async {
     final bloc = context.read<OverlayUiBloc>();
+    final currentPanel = bloc.state.playerPanel;
+    final isHidden = currentPanel == PlayerPanel.none ||
+        currentPanel == PlayerPanel.simple ||
+        currentPanel == PlayerPanel.info;
+    if (isHidden) {
+      bloc.add(const SetActivePanel(playerPanel: PlayerPanel.touchOverlay));
+      return;
+    }
     await widget.controller.playPause();
     bloc.add(
       const SetActivePanel(playerPanel: PlayerPanel.info, debounce: true),

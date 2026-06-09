@@ -41,7 +41,9 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
 
   void _startHideTimer() {
     _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(seconds: 5), () {
+    final isTouch = context.read<OverlayUiBloc>().state.isTouch;
+    final timeout = isTouch ? const Duration(seconds: 5) : const Duration(seconds: 20);
+    _hideTimer = Timer(timeout, () {
       if (mounted &&
           context.read<OverlayUiBloc>().state.playerPanel ==
               PlayerPanel.touchOverlay) {
@@ -279,6 +281,7 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                               ),
                                               const SizedBox(width: 24),
                                               IconButton(
+                                                autofocus: true,
                                                 icon: Icon(
                                                   isPlaying
                                                       ? Icons
