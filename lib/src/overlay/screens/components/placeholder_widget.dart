@@ -127,6 +127,7 @@ class _PlaceholderWidgetState extends State<PlaceholderWidget> {
                 ),
 
               if (snapshot.data?.loadingStatus != null &&
+                  snapshot.data!.loadingStatus!.isNotEmpty &&
                   playerState.lastError == null)
                 Positioned(
                   bottom: 25,

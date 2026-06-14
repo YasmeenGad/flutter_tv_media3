@@ -24,13 +24,10 @@ class _TimeLinePanelState extends State<TimeLinePanel> {
   final _sliderFocus = FocusNode(debugLabel: 'progressSlider');
   bool _sliderHasFocus = false;
   LogicalKeyboardKey? _heldKey;
-  DateTime? _holdStartTime;
-  DateTime? _lastLongSeekTime;
+  DateTime? _lastRepeatSeekTime;
 
   static const _shortSeekSeconds = 10;
-  static const _longSeekSeconds = 30;
-  static const _longPressThreshold = Duration(seconds: 3);
-  static const _longRepeatInterval = Duration(milliseconds: 600);
+  static const _repeatSeekInterval = Duration(milliseconds: 250);
 
   final style = const TextStyle(
     color: Colors.white,
@@ -63,8 +60,7 @@ class _TimeLinePanelState extends State<TimeLinePanel> {
 
   void _cancelLongPress() {
     _heldKey = null;
-    _holdStartTime = null;
-    _lastLongSeekTime = null;
+    _lastRepeatSeekTime = null;
   }
 
   void _seekBySeconds(int seconds) {
@@ -77,18 +73,15 @@ class _TimeLinePanelState extends State<TimeLinePanel> {
   int _directionFor(LogicalKeyboardKey key) =>
       key == LogicalKeyboardKey.arrowRight ? 1 : -1;
 
-  bool _handleHoldRepeat(LogicalKeyboardKey key) {
-    if (_heldKey != key || _holdStartTime == null) return false;
+  void _handleHoldRepeat(LogicalKeyboardKey key) {
+    if (_heldKey != key) return;
     final now = DateTime.now();
-    final heldFor = now.difference(_holdStartTime!);
-    if (heldFor < _longPressThreshold) return true;
-    if (_lastLongSeekTime != null &&
-        now.difference(_lastLongSeekTime!) < _longRepeatInterval) {
-      return true;
+    if (_lastRepeatSeekTime != null &&
+        now.difference(_lastRepeatSeekTime!) < _repeatSeekInterval) {
+      return;
     }
-    _seekBySeconds(_longSeekSeconds * _directionFor(key));
-    _lastLongSeekTime = now;
-    return true;
+    _seekBySeconds(_shortSeekSeconds * _directionFor(key));
+    _lastRepeatSeekTime = now;
   }
 
   @override
@@ -178,16 +171,11 @@ class _TimeLinePanelState extends State<TimeLinePanel> {
                               }
                               if (key == LogicalKeyboardKey.arrowRight ||
                                   key == LogicalKeyboardKey.arrowLeft) {
-                                if (_heldKey == key) {
-                                  _handleHoldRepeat(key);
-                                } else {
-                                  _seekBySeconds(
-                                    _shortSeekSeconds * _directionFor(key),
-                                  );
-                                  _heldKey = key;
-                                  _holdStartTime = DateTime.now();
-                                  _lastLongSeekTime = null;
-                                }
+                                _seekBySeconds(
+                                  _shortSeekSeconds * _directionFor(key),
+                                );
+                                _heldKey = key;
+                                _lastRepeatSeekTime = DateTime.now();
                                 return KeyEventResult.handled;
                               }
                             }

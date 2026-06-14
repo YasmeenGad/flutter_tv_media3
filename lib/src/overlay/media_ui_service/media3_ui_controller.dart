@@ -307,13 +307,12 @@ class Media3UiController {
 
       case 'loadedMediaInfo':
         final playIndex = call.arguments['playlist_index'] ?? 0;
-        final loadingStatus = "Buffering...";
         if (newState.playlist.length > playIndex) {
           playItem = newState.playlist[playIndex];
         }
         newState = newState.copyWith(
           playIndex: playIndex,
-          loadingStatus: loadingStatus,
+          loadingStatus: '',
           loadingProgress: null,
         );
         break;

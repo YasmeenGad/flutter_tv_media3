@@ -13,8 +13,8 @@ class AppTheme {
   static const Color colorMuted = Color(0xFF7A7A7A);
 
   static const backgroundColor = Color(0xCC000000);
-  static const fullFocusColor = Color(0xFF2196F3);
-  static const focusColor = Color(0x662196F3);
+  static const fullFocusColor = Color(0xFF086B3D);
+  static const focusColor = Color(0x66086B3D);
   static const timeWarningColor = Color(0xFFFF5722);
   static const Color divider = Color(0xFF616161);
   static const Color errColor = Color(0xFFF44336);

@@ -363,7 +363,6 @@ internal fun PlayerActivity.handleMethodCall(
 
         else -> {
             reportErrorToOther(from, result, "NOT_IMPLEMENTED", "Method ${call.method} not implemented in PlayerActivity channel.")
-            result.notImplemented()
         }
     }
 }
