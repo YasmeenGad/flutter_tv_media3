@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tv_media3/flutter_tv_media3.dart';
 
 import '../../entity/find_subtitles_state.dart';
 import '../../entity/refresh_rate_info.dart';
+import '../../lifecycle/lifecycle_types.dart';
+import '../../lifecycle/player_lifecycle_coordinator.dart';
 
 /// Manages the state and interaction of the player UI overlay.
 ///
@@ -71,15 +74,53 @@ class Media3UiController {
   final ValueNotifier<FindSubtitlesState> findSubtitlesStateNotifier =
       ValueNotifier(const FindSubtitlesState());
 
+  /// Lifecycle gate for all outbound MethodChannel invocations. Translates
+  /// raw `channel.invokeMethod` calls into state-aware, race-safe operations.
+  late final PlayerLifecycleCoordinator _lifecycle =
+      PlayerLifecycleCoordinator(
+    channel: _activityChannel,
+    debugLabel: 'Media3UiController',
+  );
+
+  /// Observable lifecycle state for UI consumers. Bind controls to this to
+  /// disable/enable based on whether the native player is currently usable.
+  ValueListenable<PlayerLifecycleState> get lifecycleState => _lifecycle.state;
+
+  /// True when the native side is currently callable
+  /// ([PlayerLifecycleState.ready] or [PlayerLifecycleState.background]).
+  bool get isPlayerLive => _lifecycle.isLive;
+
   /// Constructor that initializes states and the native call handler.
   Media3UiController() {
     _initStates();
     _activityChannel.setMethodCallHandler(_handleNativeCallbacks);
+    // NOTE: do NOT call `_lifecycle.beginAttach()` here.
+    // The overlay engine is spun up BEFORE the native activity exists; the
+    // activity is only launched once `overlayEntryPointCalled()` reaches the
+    // plugin. Calling beginAttach would cause `overlayEntryPointCalled` to be
+    // dropped, leading to an infinite loading state.
   }
 
   /// Notifies the native layer that the UI overlay entry point has been called.
+  ///
+  /// This is a **bootstrap signal** that triggers `PlayerActivity.startActivity`
+  /// in native. It MUST bypass the lifecycle gate because:
+  ///   * it is sent before any native activity exists, so by definition the
+  ///     coordinator is not `ready`;
+  ///   * dropping it would cause the player to never start.
   void overlayEntryPointCalled() {
-    _invokeMethodGuarded(_activityChannel, 'onOverlayEntryPointCalled');
+    // Bypass the lifecycle coordinator and the guarded wrapper entirely.
+    _activityChannel.invokeMethod('onOverlayEntryPointCalled').catchError((
+      Object _,
+    ) {
+      // Plugin / channel transient errors during early bootstrap are
+      // non-fatal — the user can retry from the host app.
+      return null;
+    });
+    // Mark attach as in-progress now that we've actually requested the
+    // activity to start; queued commands will buffer until
+    // `lifecycle.attached` / `onActivityReady` arrives.
+    _lifecycle.beginAttach();
   }
 
   void _initStates() {
@@ -93,6 +134,12 @@ class Media3UiController {
   /// Parses calls, updates the corresponding states (`_playerState`, `_playbackState`),
   /// and notifies listeners via streams.
   Future<dynamic> _handleNativeCallbacks(MethodCall call) async {
+    // Intercept lifecycle signals BEFORE any state mutation. These are
+    // emitted by PlayerActivity.kt on onCreate/onResume/onPause/onDestroy.
+    if (_lifecycle.handleNativeMethodCall(call)) {
+      return null;
+    }
+
     PlayerState newState = _playerState;
 
     switch (call.method) {
@@ -103,6 +150,10 @@ class Media3UiController {
         break;
 
       case 'onActivityReady':
+        // Treat the legacy 'onActivityReady' as an implicit attached signal
+        // for backwards-compatibility with native code paths that haven't
+        // been upgraded to emit explicit lifecycle.* events.
+        _lifecycle.notify(LifecycleEvent.attached);
         final playlistStr = call.arguments['playlist'] as String? ?? '{}';
         final playIndex = call.arguments['playlist_index'] as int? ?? 0;
         final Map<dynamic, dynamic>? subtitleStyleMap =
@@ -456,24 +507,41 @@ class Media3UiController {
   }
 
   /// Sends a "play/pause" command to the native player.
-  Future<void> playPause() async =>
-      await _invokeMethodGuarded<void>(_activityChannel, 'playPause');
+  Future<void> playPause() async => await _invokeMethodGuarded<void>(
+        _activityChannel,
+        'playPause',
+        null,
+        InvokePolicy.queueUntilReady,
+      );
 
   /// Sends a "play" command to the native player.
   Future<void> play() async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'play');
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'play',
+      null,
+      InvokePolicy.queueUntilReady,
+    );
   }
 
   /// Sends a "pause" command to the native player.
   Future<void> pause() async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'pause');
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'pause',
+      null,
+      InvokePolicy.queueUntilReady,
+    );
   }
 
   /// Sends a "seek" command to the native player.
   Future<void> seekTo({required int positionSeconds}) async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'seekTo', {
-      "position": positionSeconds * 1000,
-    });
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'seekTo',
+      {"position": positionSeconds * 1000},
+      InvokePolicy.coalesce,
+    );
   }
 
   /// Sends a command to set the playback speed.
@@ -583,8 +651,23 @@ class Media3UiController {
   }
 
   /// Sends a "stop" command to the native player.
+  ///
+  /// The stop call itself must reach the native side while the channel is
+  /// still live, so we dispatch it before transitioning into `disposing`.
+  /// After the call returns, the coordinator is marked disposing so any
+  /// subsequent in-flight queued commands are drained and later calls are
+  /// rejected/dropped.
   Future<void> stop() async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'stop');
+    try {
+      await _invokeMethodGuarded<void>(
+        _activityChannel,
+        'stop',
+        null,
+        InvokePolicy.queueUntilReady,
+      );
+    } finally {
+      _lifecycle.beginDispose();
+    }
   }
 
   /// Sends a command to trigger the "load more" (pagination) logic on the main application.
@@ -788,11 +871,16 @@ class Media3UiController {
         'You must provide a track index or a track with index.',
       );
     }
-    await _invokeMethodGuarded<void>(_activityChannel, 'selectTrack', {
-      "trackType": trackType,
-      'trackIndex': trackIndex,
-      'groupIndex': groupIndex,
-    });
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'selectTrack',
+      {
+        "trackType": trackType,
+        'trackIndex': trackIndex,
+        'groupIndex': groupIndex,
+      },
+      InvokePolicy.queueUntilReady,
+    );
   }
 
   /// Sends a command to get the latest metadata from the native player.
@@ -835,28 +923,46 @@ class Media3UiController {
     }
   }
 
-  /// Internal wrapper for invoking methods on the native side
-  /// with safe error handling.
+  /// Internal wrapper for invoking methods on the native side.
+  ///
+  /// All calls are routed through [_lifecycle] which:
+  ///   * gates against the native activity lifecycle (no
+  ///     `MissingPluginException` storms during attach/detach);
+  ///   * queues / coalesces / drops the call based on [policy];
+  ///   * surfaces real [PlatformException]s for caller-side error reporting.
+  ///
+  /// The `channel` argument is retained for API backwards-compatibility; the
+  /// lifecycle coordinator is bound at construction time to
+  /// [_activityChannel] and is the only channel routed through this method.
   Future<T?> _invokeMethodGuarded<T>(
     MethodChannel channel,
     String method, [
     dynamic arguments,
+    InvokePolicy policy = InvokePolicy.dropIfNotReady,
   ]) async {
     try {
-      final T? result = await channel.invokeMethod<T>(method, arguments);
-      return result;
+      return await _lifecycle.invoke<T>(
+        method,
+        arguments: arguments,
+        policy: policy,
+      );
     } on PlatformException catch (e) {
-      final newState = _playerState.copyWith(
-        lastError: e.message ?? 'An unknown playback error occurred.',
-        errorCode: '$method: ${e.code}',
+      _updateState(
+        _playerState.copyWith(
+          lastError: e.message ?? 'An unknown playback error occurred.',
+          errorCode: '$method: ${e.code}',
+        ),
       );
-      _updateState(newState);
+    } on StateError {
+      // Lifecycle rejected the call (rejectIfNotReady). Caller should retry.
+      return null;
     } catch (e) {
-      final newState = _playerState.copyWith(
-        lastError: e.toString(),
-        errorCode: method,
+      _updateState(
+        _playerState.copyWith(
+          lastError: e.toString(),
+          errorCode: method,
+        ),
       );
-      _updateState(newState);
     }
     return null;
   }
@@ -941,17 +1047,23 @@ class Media3UiController {
   /// Sets the volume on the native player.
   /// [volume] The volume level to set, from 0.0 to 1.0.
   Future<void> setVolume({required double volume}) async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'setVolume', {
-      'volume': volume.clamp(0.0, 1.0),
-    });
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'setVolume',
+      {'volume': volume.clamp(0.0, 1.0)},
+      InvokePolicy.coalesce,
+    );
   }
 
   /// Mutes or unmutes the audio on the native player.
   /// [mute] True to mute, false to unmute.
   Future<void> setMute({required bool mute}) async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'setMute', {
-      'mute': mute,
-    });
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'setMute',
+      {'mute': mute},
+      InvokePolicy.queueUntilReady,
+    );
   }
 
   /// Toggles the mute state on the native player.
@@ -959,6 +1071,8 @@ class Media3UiController {
     final result = await _invokeMethodGuarded<Map<dynamic, dynamic>>(
       _activityChannel,
       'toggleMute',
+      null,
+      InvokePolicy.queueUntilReady,
     );
     final isMute = result?['isMute'] as bool?;
     if (isMute != null) {

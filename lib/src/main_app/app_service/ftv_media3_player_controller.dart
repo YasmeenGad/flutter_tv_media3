@@ -3,11 +3,14 @@ import 'dart:io';
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../flutter_tv_media3.dart';
 import '../../entity/find_subtitles_state.dart';
 import '../../entity/refresh_rate_info.dart';
+import '../../lifecycle/lifecycle_types.dart';
+import '../../lifecycle/player_lifecycle_coordinator.dart';
 
 /// A callback to save the current subtitle style settings.
 typedef SaveSubtitleStyle =
@@ -185,6 +188,21 @@ class FtvMedia3PlayerController {
     _setPluginMethodCallHandler(_handleMethodCall);
   }
 
+  /// Lifecycle gate for the activity-bound channel. Plugin-channel calls
+  /// (`openPlayer`, etc.) are always considered live and bypass this gate.
+  late final PlayerLifecycleCoordinator _lifecycle =
+      PlayerLifecycleCoordinator(
+    channel: _activityChannel,
+    debugLabel: 'FtvMedia3PlayerController',
+  );
+
+  /// Observable lifecycle state. UI / page-level guards can listen to this
+  /// to gate user actions while the activity is attaching / detached.
+  ValueListenable<PlayerLifecycleState> get lifecycleState => _lifecycle.state;
+
+  /// True when the activity channel is currently callable.
+  bool get isActivityLive => _lifecycle.isLive;
+
   void setConfig({
     Map<String, String>? localeStrings,
     SubtitleStyle? subtitleStyle,
@@ -271,6 +289,13 @@ class FtvMedia3PlayerController {
   /// This method acts as a router, dispatching actions based on the method name
   /// received from the native player. It updates the player state accordingly.
   Future<dynamic> _handleMethodCall(MethodCall call) async {
+    // Intercept lifecycle signals first so the coordinator's state machine
+    // reflects the activity's true state regardless of which legacy case
+    // branch consumes the same event below.
+    if (_lifecycle.handleNativeMethodCall(call)) {
+      return null;
+    }
+
     PlayerState newState = _playerState;
     switch (call.method) {
       case 'getMediaInfo':
@@ -351,7 +376,7 @@ class FtvMedia3PlayerController {
           }
 
           _sendLoadProgressToUI(
-            state: 'Link loaded',
+            state: '',
             progress: null,
             requestId: requestId,
           );
@@ -590,6 +615,8 @@ class FtvMedia3PlayerController {
         return;
 
       case 'onActivityReady':
+        // Legacy ready signal — treat as implicit "attached".
+        _lifecycle.notify(LifecycleEvent.attached);
         final playIndex = call.arguments['playlist_index'] as int? ?? 0;
         final Map<dynamic, dynamic>? subtitleStyleMap =
             call.arguments['subtitle_style'];
@@ -652,6 +679,8 @@ class FtvMedia3PlayerController {
         break;
 
       case 'onActivityDestroyed':
+        // Legacy destroy signal — treat as implicit "detached".
+        _lifecycle.notify(LifecycleEvent.detached);
         newState = PlayerState(activityDestroyed: true);
         _updateState(newState);
         break;
@@ -912,6 +941,9 @@ class FtvMedia3PlayerController {
         ).toMap();
 
     try {
+      // The native activity is about to start; queue any activity-channel
+      // calls that happen before `onActivityReady` arrives.
+      _lifecycle.beginAttach();
       await _invokeMethodGuarded<void>(_pluginChannel, 'openPlayer', {
         "playlist_index": initialIndex,
         "playlist_length": playlist.length,
@@ -1025,15 +1057,37 @@ class FtvMedia3PlayerController {
     _pluginChannel.setMethodCallHandler(handler);
   }
 
-  /// A guarded wrapper for invoking method channel methods to handle exceptions.
+  /// A guarded wrapper for invoking method channel methods to handle
+  /// exceptions.
+  ///
+  /// Calls on the activity-bound channel are routed through the lifecycle
+  /// coordinator so they are queued / coalesced / dropped according to
+  /// [policy] when the native activity is not currently attached.
+  /// Plugin-channel calls (`openPlayer`, etc.) bypass the gate.
   Future<T> _invokeMethodGuarded<T>(
     MethodChannel channel,
     String method, [
     dynamic arguments,
+    InvokePolicy policy = InvokePolicy.dropIfNotReady,
   ]) async {
     try {
+      if (identical(channel, _activityChannel)) {
+        final T? result = await _lifecycle.invoke<T>(
+          method,
+          arguments: arguments,
+          policy: policy,
+        );
+        return result as T;
+      }
       final T? result = await channel.invokeMethod<T>(method, arguments);
       return result as T;
+    } on MissingPluginException catch (_) {
+      // Lifecycle race — caller should not see this as a real error.
+      return null as T;
+    } on StateError catch (_) {
+      // Lifecycle rejected the call (rejectIfNotReady). Treat as no-op for
+      // backwards-compatibility with existing callers.
+      return null as T;
     } on PlatformException catch (e, s) {
       throw AppPlayerException(
         'Platform error calling $method: ${e.message}',
@@ -1041,31 +1095,51 @@ class FtvMedia3PlayerController {
         s,
       );
     } catch (e, s) {
+      if (e is MissingPluginException) {
+        return null as T;
+      }
       throw AppPlayerException('Error calling $method: $e', e, s);
     }
   }
 
   /// Toggles the player between play and pause states.
-  Future<void> playPause() async =>
-      await _invokeMethodGuarded<void>(_activityChannel, 'playPause');
+  Future<void> playPause() async => await _invokeMethodGuarded<void>(
+        _activityChannel,
+        'playPause',
+        null,
+        InvokePolicy.queueUntilReady,
+      );
 
   /// Starts or resumes playback.
   Future<void> play() async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'play');
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'play',
+      null,
+      InvokePolicy.queueUntilReady,
+    );
   }
 
   /// Pauses playback.
   Future<void> pause() async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'pause');
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'pause',
+      null,
+      InvokePolicy.queueUntilReady,
+    );
   }
 
   /// Seeks to a specific position in the current media item.
   ///
   /// [positionSeconds] The position to seek to, in seconds.
   Future<void> seekTo({required int positionSeconds}) async {
-    await _invokeMethodGuarded<void>(_activityChannel, 'seekTo', {
-      "position": positionSeconds * 1000,
-    });
+    await _invokeMethodGuarded<void>(
+      _activityChannel,
+      'seekTo',
+      {"position": positionSeconds * 1000},
+      InvokePolicy.coalesce,
+    );
   }
 
   /// Sets the playback speed.

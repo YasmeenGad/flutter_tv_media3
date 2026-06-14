@@ -30,6 +30,7 @@ class AppTheme {
 
   static ThemeData darkTheme = ThemeData(
     brightness: Brightness.dark,
+    focusColor: Colors.white.withValues(alpha: 0.18),
     scrollbarTheme: ScrollbarThemeData(
       trackColor: WidgetStateProperty.all(Colors.white10),
       trackBorderColor: WidgetStateProperty.all(Colors.white10),
@@ -38,13 +39,58 @@ class AppTheme {
       style: ButtonStyle(
         side: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.focused)) {
-            return BorderSide(color: fullFocusColor, width: 2);
+            return const BorderSide(color: Colors.white, width: 2);
           }
-          return BorderSide(color: Colors.white30, width: 1);
+          return const BorderSide(color: Colors.white30, width: 1);
         }),
         shape: WidgetStateProperty.all(
           RoundedRectangleBorder(borderRadius: AppTheme.borderRadius),
         ),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: ButtonStyle(
+        shape: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused)) {
+            return const CircleBorder(
+              side: BorderSide(color: Colors.white, width: 2),
+            );
+          }
+          return const CircleBorder();
+        }),
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused) ||
+              states.contains(WidgetState.hovered)) {
+            return Colors.white.withValues(alpha: 0.18);
+          }
+          return null;
+        }),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused)) {
+            return Colors.white.withValues(alpha: 0.12);
+          }
+          return null;
+        }),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: ButtonStyle(
+        side: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused)) {
+            return const BorderSide(color: Colors.white, width: 2);
+          }
+          return null;
+        }),
+        shape: WidgetStateProperty.all(
+          RoundedRectangleBorder(borderRadius: AppTheme.borderRadius),
+        ),
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.focused) ||
+              states.contains(WidgetState.hovered)) {
+            return Colors.white.withValues(alpha: 0.15);
+          }
+          return null;
+        }),
       ),
     ),
   );

@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tv_media3/src/app_theme/app_theme.dart';
 
 import 'widgets/clock_widget.dart';
@@ -20,12 +21,75 @@ class TimeLinePanel extends StatefulWidget {
 
 class _TimeLinePanelState extends State<TimeLinePanel> {
   double? _sliderPositionOnDrag;
+  final _sliderFocus = FocusNode(debugLabel: 'progressSlider');
+  bool _sliderHasFocus = false;
+  LogicalKeyboardKey? _heldKey;
+  DateTime? _holdStartTime;
+  DateTime? _lastLongSeekTime;
+
+  static const _shortSeekSeconds = 10;
+  static const _longSeekSeconds = 30;
+  static const _longPressThreshold = Duration(seconds: 3);
+  static const _longRepeatInterval = Duration(milliseconds: 600);
 
   final style = const TextStyle(
     color: Colors.white,
     fontWeight: FontWeight.w600,
     fontSize: 18,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    _sliderFocus.addListener(_onSliderFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _sliderFocus.removeListener(_onSliderFocusChange);
+    _sliderFocus.dispose();
+    _cancelLongPress();
+    super.dispose();
+  }
+
+  void _onSliderFocusChange() {
+    if (!mounted) return;
+    final hasFocus = _sliderFocus.hasFocus;
+    if (hasFocus != _sliderHasFocus) {
+      setState(() => _sliderHasFocus = hasFocus);
+    }
+    if (!hasFocus) _cancelLongPress();
+  }
+
+  void _cancelLongPress() {
+    _heldKey = null;
+    _holdStartTime = null;
+    _lastLongSeekTime = null;
+  }
+
+  void _seekBySeconds(int seconds) {
+    final duration = widget.controller.playbackState.duration;
+    final position = widget.controller.playbackState.position;
+    final newPosition = (position + seconds).clamp(0, duration);
+    widget.controller.seekTo(positionSeconds: newPosition);
+  }
+
+  int _directionFor(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.arrowRight ? 1 : -1;
+
+  bool _handleHoldRepeat(LogicalKeyboardKey key) {
+    if (_heldKey != key || _holdStartTime == null) return false;
+    final now = DateTime.now();
+    final heldFor = now.difference(_holdStartTime!);
+    if (heldFor < _longPressThreshold) return true;
+    if (_lastLongSeekTime != null &&
+        now.difference(_lastLongSeekTime!) < _longRepeatInterval) {
+      return true;
+    }
+    _seekBySeconds(_longSeekSeconds * _directionFor(key));
+    _lastLongSeekTime = now;
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,54 +150,116 @@ class _TimeLinePanelState extends State<TimeLinePanel> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            isLive
-                                ? const SizedBox.shrink()
-                                : Text(
-                                  '${((_sliderPositionOnDrag ?? positionPercentage) * 100).round()}%',
-                                  style: style,
-                                ),
                             Expanded(child: const CustomInfoTextWidget()),
                             const ClockWidget(),
                           ],
                         ),
-                        SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 10.0,
-                            thumbShape: const CustomThumbShape(
-                              thumbRadius: 8.0,
-                              borderWidth: 3.0,
-                              cornerRadius: 4.0,
+                        Focus(
+                          focusNode: _sliderFocus,
+                          canRequestFocus: true,
+                          onKeyEvent: (node, event) {
+                            final key = event.logicalKey;
+
+                            if (event is KeyUpEvent) {
+                              if (_heldKey == key) _cancelLongPress();
+                              return KeyEventResult.ignored;
+                            }
+
+                            if (event is KeyDownEvent) {
+                              if (key == LogicalKeyboardKey.arrowUp) {
+                                _cancelLongPress();
+                                node.focusInDirection(TraversalDirection.up);
+                                return KeyEventResult.handled;
+                              }
+                              if (key == LogicalKeyboardKey.arrowDown) {
+                                _cancelLongPress();
+                                node.focusInDirection(TraversalDirection.down);
+                                return KeyEventResult.handled;
+                              }
+                              if (key == LogicalKeyboardKey.arrowRight ||
+                                  key == LogicalKeyboardKey.arrowLeft) {
+                                if (_heldKey == key) {
+                                  _handleHoldRepeat(key);
+                                } else {
+                                  _seekBySeconds(
+                                    _shortSeekSeconds * _directionFor(key),
+                                  );
+                                  _heldKey = key;
+                                  _holdStartTime = DateTime.now();
+                                  _lastLongSeekTime = null;
+                                }
+                                return KeyEventResult.handled;
+                              }
+                            }
+
+                            if (event is KeyRepeatEvent) {
+                              if (key == LogicalKeyboardKey.arrowRight ||
+                                  key == LogicalKeyboardKey.arrowLeft) {
+                                _handleHoldRepeat(key);
+                                return KeyEventResult.handled;
+                              }
+                            }
+
+                            return KeyEventResult.ignored;
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            curve: Curves.easeOut,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _sliderHasFocus
+                                    ? Colors.white.withValues(alpha: 0.85)
+                                    : Colors.transparent,
+                                width: 1,
+                              ),
                             ),
-                            overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 16.0,
+                            child: ExcludeFocus(
+                              child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 10.0,
+                                thumbShape: const CustomThumbShape(
+                                  thumbRadius: 8.0,
+                                  borderWidth: 3.0,
+                                  cornerRadius: 4.0,
+                                ),
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 16.0,
+                                ),
+                                trackShape:
+                                    const RectangularSliderTrackShape(),
+                              ),
+                              child: Slider(
+                                value:
+                                    _sliderPositionOnDrag ??
+                                    positionPercentage,
+                                secondaryTrackValue: bufferedPercentage,
+                                min: 0.0,
+                                max: 1.0,
+
+                                activeColor: AppTheme.fullFocusColor,
+                                secondaryActiveColor: AppTheme.colorMuted,
+                                inactiveColor: AppTheme.colorPrimary,
+                                thumbColor: AppTheme.fullFocusColor,
+
+                                onChangeEnd: (newValue) {
+                                  final newPosition =
+                                      data.duration * newValue;
+                                  widget.controller.seekTo(
+                                    positionSeconds: newPosition.toInt(),
+                                  );
+                                  setState(() {
+                                    _sliderPositionOnDrag = null;
+                                  });
+                                },
+                                onChanged: (newValue) {
+                                  setState(() {
+                                    _sliderPositionOnDrag = newValue;
+                                  });
+                                },
+                              ),
                             ),
-                            trackShape: const RectangularSliderTrackShape(),
                           ),
-                          child: Slider(
-                            value: _sliderPositionOnDrag ?? positionPercentage,
-                            secondaryTrackValue: bufferedPercentage,
-                            min: 0.0,
-                            max: 1.0,
-
-                            activeColor: AppTheme.fullFocusColor,
-                            secondaryActiveColor: AppTheme.colorMuted,
-                            inactiveColor: AppTheme.colorPrimary,
-                            thumbColor: AppTheme.fullFocusColor,
-
-                            onChangeEnd: (newValue) {
-                              final newPosition = data.duration * newValue;
-                              widget.controller.seekTo(
-                                positionSeconds: newPosition.toInt(),
-                              );
-                              setState(() {
-                                _sliderPositionOnDrag = null;
-                              });
-                            },
-                            onChanged: (newValue) {
-                              setState(() {
-                                _sliderPositionOnDrag = newValue;
-                              });
-                            },
                           ),
                         ),
                         isLive

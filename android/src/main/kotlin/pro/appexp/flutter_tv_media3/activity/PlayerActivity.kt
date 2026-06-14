@@ -153,6 +153,10 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
         positionHandler.removeCallbacks(positionRunnable)
+        // Tell Dart lifecycle coordinators the activity has been backgrounded.
+        if (this::methodChannel.isInitialized && this::methodUIChannel.isInitialized) {
+            invokeOnBothChannels("lifecycle.paused", null)
+        }
     }
 
     /**
@@ -168,6 +172,10 @@ class PlayerActivity : AppCompatActivity() {
             if (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING) {
                 positionHandler.post(positionRunnable)
             }
+        }
+        // Tell Dart lifecycle coordinators the activity is back in foreground.
+        if (this::methodChannel.isInitialized && this::methodUIChannel.isInitialized) {
+            invokeOnBothChannels("lifecycle.resumed", null)
         }
     }
 
@@ -187,6 +195,12 @@ class PlayerActivity : AppCompatActivity() {
             volumeManager.unregister()
         }
 
+        // Notify both Dart engines that the activity is being torn down so
+        // their lifecycle coordinators can transition to detached and drain
+        // any queued commands BEFORE we strip the handlers.
+        if (this::methodChannel.isInitialized && this::methodUIChannel.isInitialized) {
+            invokeOnBothChannels("lifecycle.detached", null)
+        }
         if (this::methodChannel.isInitialized) {
             methodChannel.invokeMethod("onActivityDestroyed", null)
             methodChannel.setMethodCallHandler(null)
@@ -286,6 +300,11 @@ class PlayerActivity : AppCompatActivity() {
         methodUIChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, activityChannelUIName).also {
             it.setMethodCallHandler { call, result -> handleMethodCall(call, result, from = it) }
         }
+        // NOTE: do NOT emit "lifecycle.attached" here — the overlay Dart engine
+        // may still be initializing and would miss the signal, leaving its
+        // coordinator stuck in `attaching`. The canonical attach signal is
+        // `onActivityReady` (emitted later by startPlaylist after all
+        // delegates are wired) which the Dart side maps to `attached`.
     }
 
     private fun initDelegates() {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_tv_media3/flutter_tv_media3.dart';
 import '../../bloc/overlay_ui_bloc.dart';
@@ -22,6 +23,15 @@ class TouchControlsOverlay extends StatefulWidget {
 class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
   Timer? _hideTimer;
   double _opacity = 0;
+  final FocusNode _lockFocus = FocusNode(debugLabel: 'tcOverlay.lock');
+  final FocusNode _replay10Focus = FocusNode(debugLabel: 'tcOverlay.replay10');
+  final FocusNode _speakerFocus = FocusNode(
+    debugLabel: 'tcOverlay.speakerIcon',
+  );
+  final FocusNode _volumeSliderFocus = FocusNode(
+    debugLabel: 'tcOverlay.volumeSlider',
+  );
+
   @override
   void initState() {
     super.initState();
@@ -36,6 +46,10 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _lockFocus.dispose();
+    _replay10Focus.dispose();
+    _speakerFocus.dispose();
+    _volumeSliderFocus.dispose();
     super.dispose();
   }
 
@@ -60,14 +74,6 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
     if (newPosition >= 0 && newPosition <= duration) {
       await widget.controller.seekTo(positionSeconds: newPosition);
     }
-    _startHideTimer();
-  }
-
-  void _goToVideoPercentage(double percentage) {
-    if (widget.controller.playerState.isLive == true) return;
-    final duration = widget.controller.playbackState.duration;
-    final newPosition = (duration * percentage).toInt();
-    widget.controller.seekTo(positionSeconds: newPosition);
     _startHideTimer();
   }
 
@@ -138,6 +144,7 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                         MainAxisAlignment.spaceBetween,
                                     children: [
                                       IconButton(
+                                        focusNode: _lockFocus,
                                         icon: Icon(
                                           isLocked
                                               ? Icons.lock
@@ -165,51 +172,196 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                               return const SizedBox.shrink();
                                             }
 
+                                            void toggleMute() {
+                                              widget.controller.toggleMute();
+                                              _startHideTimer();
+                                            }
+
                                             return Visibility(
                                               visible: !isLocked,
                                               child: Column(
                                                 mainAxisAlignment:
                                                     MainAxisAlignment.center,
                                                 children: [
-                                                  IconButton(
-                                                    icon: Icon(
-                                                      volumeState.isMute
-                                                          ? Icons.volume_off
-                                                          : volumeState
-                                                                  .current >
-                                                              0
-                                                          ? Icons.volume_up
-                                                          : Icons.volume_mute,
-                                                      color: Colors.white,
-                                                      size: 32,
-                                                    ),
-                                                    onPressed: () {
-                                                      widget.controller
-                                                          .toggleMute();
-                                                      _startHideTimer();
+                                                  Focus(
+                                                    focusNode: _speakerFocus,
+                                                    onKeyEvent: (node, event) {
+                                                      if (event
+                                                          is! KeyDownEvent) {
+                                                        return KeyEventResult
+                                                            .ignored;
+                                                      }
+                                                      final key =
+                                                          event.logicalKey;
+                                                      if (key ==
+                                                              LogicalKeyboardKey
+                                                                  .enter ||
+                                                          key ==
+                                                              LogicalKeyboardKey
+                                                                  .select ||
+                                                          key ==
+                                                              LogicalKeyboardKey
+                                                                  .numpadEnter) {
+                                                        toggleMute();
+                                                        return KeyEventResult
+                                                            .handled;
+                                                      }
+                                                      if (key ==
+                                                          LogicalKeyboardKey
+                                                              .arrowUp) {
+                                                        _lockFocus
+                                                            .requestFocus();
+                                                        return KeyEventResult
+                                                            .handled;
+                                                      }
+                                                      if (key ==
+                                                          LogicalKeyboardKey
+                                                              .arrowDown) {
+                                                        _volumeSliderFocus
+                                                            .requestFocus();
+                                                        return KeyEventResult
+                                                            .handled;
+                                                      }
+                                                      if (key ==
+                                                          LogicalKeyboardKey
+                                                              .arrowRight) {
+                                                        _replay10Focus
+                                                            .requestFocus();
+                                                        return KeyEventResult
+                                                            .handled;
+                                                      }
+                                                      if (key ==
+                                                          LogicalKeyboardKey
+                                                              .arrowLeft) {
+                                                        node.focusInDirection(
+                                                          TraversalDirection
+                                                              .left,
+                                                        );
+                                                        return KeyEventResult
+                                                            .handled;
+                                                      }
+                                                      return KeyEventResult
+                                                          .ignored;
                                                     },
-                                                  ),
-                                                  Expanded(
-                                                    child: RotatedBox(
-                                                      quarterTurns: 3,
-                                                      child: Slider(
-                                                        value:
-                                                            volumeState.volume,
-                                                        max: 1.0,
-                                                        onChanged: (value) {
-                                                          widget.controller
-                                                              .setVolume(
-                                                                volume: value,
-                                                              );
-                                                          _startHideTimer();
+                                                    child: Builder(
+                                                      builder: (context) {
+                                                          final hasFocus =
+                                                              Focus.of(
+                                                                context,
+                                                              ).hasFocus;
+                                                          return GestureDetector(
+                                                            onTap: () {
+                                                              Focus.of(
+                                                                context,
+                                                              ).requestFocus();
+                                                              toggleMute();
+                                                            },
+                                                            child: AnimatedContainer(
+                                                              duration: const Duration(
+                                                                milliseconds:
+                                                                    150,
+                                                              ),
+                                                              padding:
+                                                                  const EdgeInsets.all(
+                                                                    6,
+                                                                  ),
+                                                              decoration: BoxDecoration(
+                                                                shape:
+                                                                    BoxShape
+                                                                        .circle,
+                                                                color: hasFocus
+                                                                    ? AppTheme
+                                                                          .fullFocusColor
+                                                                          .withValues(
+                                                                            alpha:
+                                                                                0.25,
+                                                                          )
+                                                                    : Colors
+                                                                          .transparent,
+                                                                border: Border.all(
+                                                                  color: hasFocus
+                                                                      ? AppTheme
+                                                                            .fullFocusColor
+                                                                      : Colors
+                                                                            .transparent,
+                                                                  width: 2,
+                                                                ),
+                                                              ),
+                                                              child: Icon(
+                                                                volumeState
+                                                                        .isMute
+                                                                    ? Icons
+                                                                          .volume_off
+                                                                    : volumeState.current >
+                                                                          0
+                                                                    ? Icons
+                                                                          .volume_up
+                                                                    : Icons
+                                                                          .volume_mute,
+                                                                color: Colors
+                                                                    .white,
+                                                                size: 32,
+                                                              ),
+                                                            ),
+                                                          );
                                                         },
-                                                        activeColor:
-                                                            AppTheme
-                                                                .fullFocusColor,
-                                                        inactiveColor:
-                                                            AppTheme
-                                                                .colorPrimary,
                                                       ),
+                                                    ),
+                                                  Expanded(
+                                                    child: _VolumeBar(
+                                                      focusNode:
+                                                          _volumeSliderFocus,
+                                                      volume:
+                                                          volumeState.volume,
+                                                      isMute:
+                                                          volumeState.isMute,
+                                                      onIncrease: () {
+                                                        final current = widget
+                                                            .controller
+                                                            .playerState
+                                                            .volumeState
+                                                            .volume;
+                                                        final next =
+                                                            (current + 0.05)
+                                                                .clamp(
+                                                                  0.0,
+                                                                  1.0,
+                                                                );
+                                                        widget.controller
+                                                            .setVolume(
+                                                              volume: next,
+                                                            );
+                                                        _startHideTimer();
+                                                      },
+                                                      onDecrease: () {
+                                                        final current = widget
+                                                            .controller
+                                                            .playerState
+                                                            .volumeState
+                                                            .volume;
+                                                        final next =
+                                                            (current - 0.05)
+                                                                .clamp(
+                                                                  0.0,
+                                                                  1.0,
+                                                                );
+                                                        widget.controller
+                                                            .setVolume(
+                                                              volume: next,
+                                                            );
+                                                        _startHideTimer();
+                                                      },
+                                                      onRight: () {
+                                                        _replay10Focus
+                                                            .requestFocus();
+                                                      },
+                                                      onSetVolume: (v) {
+                                                        widget.controller
+                                                            .setVolume(
+                                                              volume: v,
+                                                            );
+                                                        _startHideTimer();
+                                                      },
                                                     ),
                                                   ),
                                                 ],
@@ -236,7 +388,7 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                       visible: !isLocked,
                                       child: Column(
                                         mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
+                                            MainAxisAlignment.center,
                                         children: [
                                           IconButton(
                                             icon: const Icon(
@@ -253,6 +405,7 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                               );
                                             },
                                           ),
+                                          const Spacer(),
                                           Row(
                                             mainAxisAlignment:
                                                 MainAxisAlignment.center,
@@ -272,6 +425,7 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                                 ),
                                               const SizedBox(width: 24),
                                               IconButton(
+                                                focusNode: _replay10Focus,
                                                 icon: const Icon(
                                                   Icons.replay_10,
                                                   color: Colors.white,
@@ -321,57 +475,7 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
                                                 ),
                                             ],
                                           ),
-                                          SingleChildScrollView(
-                                            scrollDirection: Axis.horizontal,
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: List.generate(10, (
-                                                index,
-                                              ) {
-                                                final percentage = index / 10.0;
-                                                return Padding(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 4.0,
-                                                      ),
-                                                  child: OutlinedButton(
-                                                    onPressed:
-                                                        () =>
-                                                            _goToVideoPercentage(
-                                                              percentage,
-                                                            ),
-                                                    style: OutlinedButton.styleFrom(
-                                                      foregroundColor:
-                                                          Colors.white30,
-                                                      side: const BorderSide(
-                                                        color: Colors.white30,
-                                                        width: 1.5,
-                                                      ),
-                                                      shape: RoundedRectangleBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              8,
-                                                            ),
-                                                      ),
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 12,
-                                                            vertical: 6,
-                                                          ),
-                                                    ),
-                                                    child: Text(
-                                                      '${index * 10}%',
-                                                      style: const TextStyle(
-                                                        color: Colors.white30,
-                                                        fontSize: 16,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                );
-                                              }),
-                                            ),
-                                          ),
+                                          const Spacer(),
                                         ],
                                       ),
                                     ),
@@ -479,4 +583,141 @@ class _TouchControlsOverlayState extends State<TouchControlsOverlay> {
             const SetActivePanel(playerPanel: PlayerPanel.none),
           )
           : null;
+}
+
+class _VolumeBar extends StatefulWidget {
+  const _VolumeBar({
+    required this.focusNode,
+    required this.volume,
+    required this.isMute,
+    required this.onIncrease,
+    required this.onDecrease,
+    required this.onRight,
+    required this.onSetVolume,
+  });
+
+  final FocusNode focusNode;
+  final double volume;
+  final bool isMute;
+  final VoidCallback onIncrease;
+  final VoidCallback onDecrease;
+  final VoidCallback onRight;
+  final ValueChanged<double> onSetVolume;
+
+  @override
+  State<_VolumeBar> createState() => _VolumeBarState();
+}
+
+class _VolumeBarState extends State<_VolumeBar> {
+  bool _hasFocus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode.addListener(_onFocusChange);
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_onFocusChange);
+    super.dispose();
+  }
+
+  void _onFocusChange() {
+    if (!mounted) return;
+    setState(() => _hasFocus = widget.focusNode.hasFocus);
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowUp) {
+      widget.onIncrease();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      widget.onDecrease();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      widget.onRight();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      node.focusInDirection(TraversalDirection.left);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveValue = widget.isMute ? 0.0 : widget.volume.clamp(0.0, 1.0);
+
+    return Focus(
+      focusNode: widget.focusNode,
+      onKeyEvent: _onKey,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) {
+              widget.focusNode.requestFocus();
+              final h = constraints.maxHeight;
+              if (h <= 0) return;
+              final v = 1.0 - (details.localPosition.dy / h);
+              widget.onSetVolume(v.clamp(0.0, 1.0));
+            },
+            onVerticalDragUpdate: (details) {
+              widget.focusNode.requestFocus();
+              final h = constraints.maxHeight;
+              if (h <= 0) return;
+              final v = 1.0 - (details.localPosition.dy / h);
+              widget.onSetVolume(v.clamp(0.0, 1.0));
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: _hasFocus
+                      ? Colors.white.withValues(alpha: 0.85)
+                      : Colors.transparent,
+                  width: 1,
+                ),
+              ),
+              child: Container(
+                width: 6,
+                decoration: BoxDecoration(
+                  color: AppTheme.colorPrimary.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: FractionallySizedBox(
+                    heightFactor: effectiveValue,
+                    widthFactor: 1.0,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      decoration: BoxDecoration(
+                        color: AppTheme.fullFocusColor,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
