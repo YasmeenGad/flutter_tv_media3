@@ -15,7 +15,10 @@ class InfoStringWidget extends StatelessWidget {
     List<AudioTrack>? audioTracks = controller.playerState.audioTracks;
     AudioTrack? audioInfo =
         audioTracks.isNotEmpty
-            ? audioTracks.firstWhereOrNull((e) => e.isSelected == true)
+            ? audioTracks.cast<AudioTrack?>().firstWhere(
+              (e) => e?.isSelected == true,
+              orElse: () => null,
+            )
             : null;
     return Wrap(
       spacing: 4,
