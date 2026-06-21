@@ -31,8 +31,8 @@ class ButtonPanelWidget extends StatelessWidget {
             IconButton(
               icon: Icon(
                 asyncSnapshot.data?.stateValue == StateValue.playing
-                    ? Icons.play_arrow
-                    : Icons.pause,
+                    ? Icons.pause
+                    : Icons.play_arrow,
               ),
               iconSize: 66,
               onPressed: controller.playPause,

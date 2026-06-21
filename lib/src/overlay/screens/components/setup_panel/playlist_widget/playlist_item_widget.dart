@@ -166,8 +166,8 @@ class _PlaylistItemWidgetState extends State<PlaylistItemWidget> {
   IconData _getIconForMediaType() {
     if (widget.isActive) {
       return widget.controller.playerState.stateValue == StateValue.playing
-          ? Icons.play_arrow_rounded
-          : Icons.pause_rounded;
+          ? Icons.pause_rounded
+          : Icons.play_arrow_rounded;
     }
     switch (widget.item.mediaItemType) {
       case MediaItemType.tvStream:

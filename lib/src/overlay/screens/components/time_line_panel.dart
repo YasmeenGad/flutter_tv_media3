@@ -100,7 +100,7 @@ class _TimeLinePanelState extends State<TimeLinePanel> {
               final playerState = snapshot.data;
               if (playerState == null) return const SizedBox(width: 40);
 
-              return playerState.stateValue == StateValue.paused
+              return playerState.stateValue == StateValue.playing
                   ? const Icon(Icons.pause, color: Colors.white, size: 40)
                   : const Icon(Icons.play_arrow, color: Colors.white, size: 40);
             },
