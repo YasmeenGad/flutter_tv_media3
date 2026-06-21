@@ -320,7 +320,7 @@ class _OverlayScreenState extends State<OverlayScreen> {
                                 playerState.videoTracks.isNotEmpty,
                             child: Center(
                               child: Icon(
-                                Icons.pause,
+                                Icons.play_arrow,
                                 color: Colors.white,
                                 size: 140,
                                 shadows: [
